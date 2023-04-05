@@ -1,0 +1,202 @@
+---
+title: "BIOSTAT Midterm"
+author: "Allister Ho"
+date: '2023-03-17'
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(naniar)
+library(glmnet)
+```
+
+
+```{r}
+train_data <- read_table("training_data.txt")
+test_data <- read_table("test_data.txt")
+
+train_data <- train_data %>%
+  mutate(outcome2 = case_when(activity == 1 ~ "Walking",
+                              activity == 2 ~ "Walking Up",
+                              activity == 3 ~ "Walking Down",
+                              activity == 4 ~ "Sitting",
+                              activity == 5 ~ "Standing",
+                              activity == 6 ~ "Lying",
+                              TRUE ~ "Static Transition"
+                              ),
+         outcome1 = if_else(activity == 1 | activity == 2 | activity == 3, "Dynamic", "Static"),
+         outcome2 = as.factor(outcome2),
+         outcome1 = as.factor(outcome1),
+         subject = as.factor(subject))
+
+set.seed(123)
+train <- train_data %>%
+  sample_frac(.7)
+valid <- setdiff(train_data, train)
+```
+
+```{r}
+y_train <- as.factor(train$outcome1)
+x_train <- data.matrix(train[, !names(train) %in% c('outcome1', 'outcome2', 'activity')])
+
+y_valid <- as.factor(valid$outcome1)
+x_valid <- data.matrix(valid[, !names(valid) %in% c('outcome1', 'outcome2', 'activity')])
+
+x_test <- data.matrix(test_data[, !names(test_data) %in% c('outcome1', 'outcome2', 'activity')])
+```
+
+
+Part 1
+```{r}
+table(y_train)
+# Baseline would be to guess static since it is more common
+table(y_valid)
+1361/(1361+969)
+```
+
+
+
+```{r}
+cv_lasso <- cv.glmnet(x_train, y_train, alpha = 1, family = "binomial", type.measure = "class")
+
+best_lambda <- cv_lasso$lambda.min
+
+baseline <- glmnet(x_train, y_train, alpha = 1, lambda = best_lambda, family = "binomial")
+
+# coef(baseline)
+
+base_predictions <- predict(baseline, x_valid)
+base_predict_whole <- if_else(base_predictions < .5, 1, 0)
+```
+
+```{r}
+table(base_predict_whole, y_valid)
+```
+
+```{r}
+test_predictions <- predict(baseline, x_test)
+test_predict_whole <- if_else(test_predictions < .5, 1, 0)
+temp <- data.frame(test_predict_whole)
+
+write.table(temp, "binary_6139.txt", row.names = FALSE, col.names = FALSE)
+```
+
+
+
+# Multiclass
+```{r}
+static_train <- train %>%
+  filter(outcome1 == "Static")
+y_static_train <- factor(static_train$outcome2)
+x_static_train <- data.matrix(static_train[, !names(static_train) %in% c('outcome1', 'outcome2', 'activity')])
+
+static_valid <- valid %>%
+  filter(outcome1 == "Static")
+y_static_valid <- factor(static_valid$outcome2)
+x_static_valid <- data.matrix(static_valid[, !names(static_valid) %in% c('outcome1', 'outcome2', 'activity')])
+
+
+
+dynamic_train <- train %>%
+  filter(outcome1 == "Dynamic")
+y_dynamic_train <- factor(dynamic_train$outcome2)
+x_dynamic_train <- data.matrix(dynamic_train[, !names(dynamic_train) %in% c('outcome1', 'outcome2', 'activity')])
+
+dynamic_valid <- valid %>%
+  filter(outcome1 == "Dynamic")
+y_dynamic_valid <- factor(dynamic_valid$outcome2)
+x_dynamic_valid <- data.matrix(dynamic_valid[, !names(dynamic_valid) %in% c('outcome1', 'outcome2', 'activity')])
+
+cv_static_lasso <- cv.glmnet(x_static_train, y_static_train, alpha = 1, family = "multinomial", type.measure = "class")
+best_static_lambda <- cv_static_lasso$lambda.min
+
+cv_dynamic_lasso <- cv.glmnet(x_dynamic_train, y_dynamic_train, alpha = 1, family = "multinomial", type.measure = "class")
+best_dynamic_lambda <- cv_dynamic_lasso$lambda.min
+```
+
+```{r}
+static_mod <- glmnet(x_static_train, y_static_train, alpha = 1, lambda = best_static_lambda, family = "multinomial")
+
+static_preds <- data.frame(predict(static_mod, x_static_train)) %>%
+  mutate(max_prob = max.col(., ties.method = "last")) %>%
+  mutate(class_pred = case_when(max_prob == 1 ~ "Lying",
+                                max_prob == 2 ~ "Sitting",
+                                max_prob == 3 ~ "Standing",
+                                max_prob == 4 ~ "Static Transition"))
+table(y_static_train, static_preds$class_pred)
+
+static_valid_preds <- data.frame(predict(static_mod, x_static_valid)) %>%
+  mutate(max_prob = max.col(., ties.method = "last")) %>%
+  mutate(class_pred = case_when(max_prob == 1 ~ "Lying",
+                                max_prob == 2 ~ "Sitting",
+                                max_prob == 3 ~ "Standing",
+                                max_prob == 4 ~ "Static Transition"))
+table(y_static_valid, static_valid_preds$class_pred)
+```
+
+```{r}
+dynamic_mod <- glmnet(x_dynamic_train, y_dynamic_train, alpha = 1, lambda = best_dynamic_lambda, family = "multinomial")
+
+dynamic_preds <- data.frame(predict(dynamic_mod, x_dynamic_train)) %>%
+  mutate(max_prob = max.col(., ties.method = "last")) %>%
+  mutate(class_pred = case_when(max_prob == 1 ~ "Walking",
+                                max_prob == 2 ~ "Walking Down",
+                                max_prob == 3 ~ "Walking Up"))
+table(y_dynamic_train, dynamic_preds$class_pred)
+
+dynamic_valid_preds <- data.frame(predict(dynamic_mod, x_dynamic_valid)) %>%
+  mutate(max_prob = max.col(., ties.method = "last")) %>%
+  mutate(class_pred = case_when(max_prob == 1 ~ "Walking",
+                                max_prob == 2 ~ "Walking Down",
+                                max_prob == 3 ~ "Walking Up"))
+table(y_dynamic_valid, dynamic_valid_preds$class_pred)
+```
+
+```{r}
+test_numbered <- test_data %>%
+  mutate(id = row_number())
+test_numbered <- cbind(test_numbered, test_predict_whole)
+
+test_static_pred <- test_numbered %>%
+  filter(test_predict_whole == 0)
+x_test_static_pred <- data.matrix(test_static_pred[, !names(test_static_pred) %in% c('outcome1', 'outcome2', 'activity', 'test_predict_whole', 'id')])
+
+test_static_multi_pred <- data.frame(predict(static_mod, x_test_static_pred)) %>%
+  mutate(max_prob = max.col(., ties.method = "last")) %>%
+  mutate(class_pred = case_when(max_prob == 1 ~ "Lying",
+                                max_prob == 2 ~ "Sitting",
+                                max_prob == 3 ~ "Standing",
+                                max_prob == 4 ~ "Static Transition"))
+
+
+static_mode_predictions <- data.frame(cbind(test_static_pred$id, test_static_multi_pred$class_pred)) %>%
+  mutate(X1 = as.integer(X1))
+
+test_dynamic_pred <- test_numbered %>%
+  filter(test_predict_whole == 1)
+x_test_dynamic_pred <- data.matrix(test_dynamic_pred[, !names(test_dynamic_pred) %in% c('outcome1', 'outcome2', 'activity', 'test_predict_whole', 'id')])
+
+test_dynamic_multi_pred <- data.frame(predict(dynamic_mod, x_test_dynamic_pred)) %>%
+  mutate(max_prob = max.col(., ties.method = "last")) %>%
+  mutate(class_pred = case_when(max_prob == 1 ~ "Walking",
+                                max_prob == 2 ~ "Walking Down",
+                                max_prob == 3 ~ "Walking Up"))
+
+dynamic_mode_predictions <- data.frame(cbind(test_dynamic_pred$id, test_dynamic_multi_pred$class_pred)) %>%
+  mutate(X1 = as.integer(X1))
+
+
+class2_predictions  <- rbind(static_mode_predictions, dynamic_mode_predictions) %>%
+  arrange(X1) %>%
+  mutate(prediction = case_when(X2 == "Walking" ~ 1,
+                                X2 == "Walking Up" ~ 2,
+                                X2 == "Walking Down" ~ 3,
+                                X2 == "Sitting" ~ 4,
+                                X2 == "Standing" ~ 5,
+                                X2 == "Lying" ~ 6,
+                                X2 == "Static Transition" ~ 7))
+
+write.table(class2_predictions$prediction, "multiclass_6139.txt", row.names = FALSE, col.names = FALSE)
+```
+

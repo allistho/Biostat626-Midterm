@@ -7,7 +7,6 @@ output: html_document
 
 ```{r}
 library(tidyverse)
-library(naniar)
 library(glmnet)
 ```
 
@@ -114,6 +113,12 @@ best_static_lambda <- cv_static_lasso$lambda.min
 cv_dynamic_lasso <- cv.glmnet(x_dynamic_train, y_dynamic_train, alpha = 1, family = "multinomial", type.measure = "class")
 best_dynamic_lambda <- cv_dynamic_lasso$lambda.min
 ```
+
+```{r}
+table(y_static_valid)
+table(y_dynamic_valid)
+```
+
 
 ```{r}
 static_mod <- glmnet(x_static_train, y_static_train, alpha = 1, lambda = best_static_lambda, family = "multinomial")
